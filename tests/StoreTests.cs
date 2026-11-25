@@ -10,5 +10,6 @@ public class StoreTests:IDisposable {
  [Fact] public void R3_Invalid(){Assert.Throws<RuleException>(()=>s.Reserve(u.Id,B(2,1)));}
  [Fact] public async Task R3_Concurrency(){var jobs=Enumerable.Range(0,2).Select(_=>Task.Run(()=>{try{s.Reserve(u.Id,B(0,2));return true;}catch(RuleException){return false;}}));Assert.Single((await Task.WhenAll(jobs)).Where(x=>x));}
  [Fact] public void R4_Lifecycle(){var id=s.Reserve(u.Id,B(0,2));Assert.Throws<UnauthorizedAccessException>(()=>s.Change(id,u,"approved"));s.Change(id,a,"approved");s.Change(id,u,"cancelled");Assert.True(s.Available(B(0,2)));Assert.Equal("cancelled",s.History(u.Id)[0].Status);var id2=s.Reserve(u.Id,B(0,2));s.Change(id2,a,"rejected");Assert.True(s.Available(B(0,2)));Assert.Empty(s.History(a.Id));}
+ [Fact] public void R3_MaxFourHours(){Assert.Throws<RuleException>(()=>s.Reserve(u.Id,B(0,5)));s.Reserve(u.Id,B(0,3));Assert.Throws<RuleException>(()=>s.Reserve(u.Id,B(3,5)));s.Reserve(u.Id,B(3,4));Assert.Throws<RuleException>(()=>s.Reserve(u.Id,B(4,5)));}
  public void Dispose(){Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();File.Delete(path);}
 }
