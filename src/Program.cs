@@ -1,0 +1,22 @@
+using Academic;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+var builder=WebApplication.CreateBuilder(args);
+builder.Services.AddEndpointsApiExplorer();builder.Services.AddSwaggerGen(o=>{o.AddSecurityDefinition("Bearer",new Microsoft.OpenApi.Models.OpenApiSecurityScheme{Type=Microsoft.OpenApi.Models.SecuritySchemeType.Http,Scheme="bearer"});o.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement{{new Microsoft.OpenApi.Models.OpenApiSecurityScheme{Reference=new Microsoft.OpenApi.Models.OpenApiReference{Type=Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,Id="Bearer"}},Array.Empty<string>()}});});
+IStore store=new Store(builder.Configuration["Database"]??"academic.db");
+var password=Environment.GetEnvironmentVariable("ACADEMIC_ADMIN_PASSWORD");if(!store.Users().Any(u=>u.Role=="admin")&&!string.IsNullOrEmpty(password))store.Register(new("admin@local.test",password),"admin");
+var tokens=new ConcurrentDictionary<string,long>();var app=builder.Build();app.UseSwagger();app.UseSwaggerUI();
+app.Use(async (ctx,next)=>{try{await next(ctx);}catch(RuleException e){ctx.Response.StatusCode=400;await ctx.Response.WriteAsJsonAsync(new{error=e.Message});}catch(UnauthorizedAccessException){ctx.Response.StatusCode=403;await ctx.Response.WriteAsJsonAsync(new{error="Acceso denegado"});}});
+User Actor(HttpContext ctx,bool admin=false){var header=ctx.Request.Headers.Authorization.ToString();if(!header.StartsWith("Bearer ")||!tokens.TryGetValue(header[7..],out var id)||store.GetUser(id) is not User u||(admin&&u.Role!="admin"))throw new UnauthorizedAccessException();return u;}
+app.MapPost("/users/register",(Credentials x)=>store.Register(x));
+app.MapPost("/users/login",IResult (Credentials x)=>{var u=store.Login(x);if(u is null)return Results.Unauthorized();var token=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));tokens[token]=u.Id;return Results.Ok(new{token,user=u});});
+app.MapGet("/users",(HttpContext c)=>{Actor(c,true);return store.Users();});
+app.MapPut("/users/{id:long}/role",(HttpContext c,long id,RoleInput x)=>{Actor(c,true);store.Role(id,x.Role);return Results.NoContent();});
+app.MapGet("/spaces",(HttpContext c)=>{Actor(c);return store.Spaces();});
+app.MapPost("/spaces",(HttpContext c,SpaceInput x)=>{Actor(c,true);return new{id=store.SaveSpace(x)};});
+app.MapPut("/spaces/{id:long}",(HttpContext c,long id,SpaceInput x)=>{Actor(c,true);return new{id=store.SaveSpace(x,id)};});
+app.MapPost("/availability",(HttpContext c,Booking x)=>{Actor(c);return new{available=store.Available(x)};});
+app.MapPost("/reservations",(HttpContext c,Booking x)=>new{id=store.Reserve(Actor(c).Id,x)});
+app.MapGet("/reservations",(HttpContext c)=>{var u=Actor(c);return store.History(u.Role=="admin"?null:u.Id);});
+app.MapPatch("/reservations/{id:long}/status",(HttpContext c,long id,Decision x)=>{store.Change(id,Actor(c),x.Status);return Results.NoContent();});
+app.Run();
